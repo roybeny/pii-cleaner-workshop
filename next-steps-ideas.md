@@ -1,7 +1,3 @@
-TODO:
-Remove K8s stuff, helm chart
-
-
 Do not read this for the design step. 
 these are ideas that can be used for later use cases - building on this service
 

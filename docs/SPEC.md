@@ -38,7 +38,7 @@ Teams integrating LLMs, analytics pipelines, and log aggregation routinely send 
 | Backend engineer (primary) | Scrub free-text before logging or sending to an LLM | Calls `POST /v1/clean` from their service |
 | Data engineer | Clean a batch of records before loading into warehouse | Calls `POST /v1/clean/records` with JSON/CSV |
 | Security/compliance officer | Evidence that PII is handled per policy | Reads audit logs; reviews detection reports |
-| Platform operator | Runs the service in the customer's cluster | Deploys via Docker/Helm; monitors via Prometheus |
+| Platform operator | Runs the service in the customer's infrastructure | Deploys via Docker; monitors via Prometheus |
 
 ## 1.5 User stories
 
@@ -118,7 +118,7 @@ Teams integrating LLMs, analytics pipelines, and log aggregation routinely send 
 
 ### GDPR (processor) controls
 - **Data minimization**: request payloads are **never persisted** by the service. Memory is zeroed after response. No swap (container runs with `--memory-swappiness=0`).
-- **No telemetry off-cluster**: air-gapped posture; all metrics/logs stay in the customer's network.
+- **No outbound telemetry**: air-gapped posture; all metrics/logs stay in the customer's network.
 - **Processor DPA-friendly**: documented sub-processors (none, by design), documented retention (zero for payloads, 90 days for structured logs — customer-configurable).
 - **Deletion / erasure**: because no payloads are stored, right-to-erasure is trivially satisfied for request data. Audit logs contain no PII values (types only), so they are not subject to erasure of the data subject's personal data beyond standard log rotation.
 - **Breach-readiness**: signed, tamper-evident audit logs (HMAC chain) enable 72-hour notification forensics.
@@ -207,7 +207,6 @@ pii-cleaner/
 ├── README.md
 ├── Dockerfile
 ├── docker-compose.yml
-├── helm/                          # Helm chart for k8s deploys
 ├── config/
 │   └── tenants.example.yaml
 ├── src/pii_cleaner/
@@ -415,8 +414,8 @@ client_ip
 - **Container image**: multi-stage build. Builder installs deps and `python -m spacy download en_core_web_lg`; runtime uses Chainguard `python:3.12` with only the app + installed site-packages + model.
 - **Image is self-contained**: model baked in, no outbound fetches at runtime.
 - **SBOM**: generated via `syft` in CI; signed with `cosign`.
-- **Helm chart**: deployment, service, HPA (CPU-based, min 2 / max 10), PodDisruptionBudget, NetworkPolicy (ingress-only), Secret mount for tenants.yaml and HMAC key.
-- **Resource requests**: `cpu: 500m, memory: 1Gi`; limits: `cpu: 2, memory: 2Gi`.
+- **Runtime**: `docker run` or `docker compose up` with tenants file + HMAC key mounted as read-only volumes. Run multiple replicas behind any reverse proxy / load balancer (nginx, HAProxy, Envoy).
+- **Resource targets per container**: request `cpu: 500m, memory: 1Gi`; limit `cpu: 2, memory: 2Gi`.
 - **Graceful shutdown**: SIGTERM → stop accepting new requests, drain in-flight within 30 s, exit.
 
 ## 2.13 CI/CD
@@ -444,7 +443,7 @@ Pipeline stages (GitHub Actions assumed, portable to GitLab):
 
 ## 2.15 Scalability & performance plan
 
-- **Horizontal scaling**: stateless replicas behind ingress; HPA on CPU.
+- **Horizontal scaling**: stateless replicas behind a reverse proxy / load balancer; autoscale on CPU via the operator's platform of choice (systemd units, process supervisor, container orchestrator, cloud autoscaling group).
 - **Vertical**: 2 vCPU / 2 GB per replica is the sweet spot for spaCy `en_core_web_lg`.
 - **Hot path optimizations**:
   - Cache compiled regex at module load.
@@ -509,7 +508,7 @@ When implementation starts (after plan approval), the following files will be cr
 - `src/pii_cleaner/errors.py` — exception types + global handler
 - `tests/unit/test_cleaner.py`, `tests/integration/test_api.py`, fixtures
 - `Dockerfile` — multi-stage, model-baked
-- `helm/` chart
+- `docker-compose.yml` — local runtime reference
 - `README.md` — quickstart, config, operations
 
 ---
