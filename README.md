@@ -61,10 +61,10 @@ curl -s localhost:8000/v1/clean/records \
       {"id": "u_456", "name": "John Roe", "email": "john@acme.com", "notes": "n/a"}
     ],
     "field_policy": {
-      "id":    {"action": "skip"},
-      "name":  {"action": "clean"},
-      "email": {"action": "clean"},
-      "notes": {"action": "clean"}
+      "id":    "skip",
+      "name":  "clean",
+      "email": "clean",
+      "notes": "clean"
     }
   }' | jq
 ```

@@ -60,7 +60,7 @@ Teams integrating LLMs, analytics pipelines, and log aggregation routinely send 
 
 ### FR-2 Structured-record cleaning (`POST /v1/clean/records`)
 - Accepts JSON array of objects *or* CSV (via `Content-Type`) *or* Parquet (via binary upload with content-type `application/vnd.apache.parquet`).
-- Request includes a `field_policy` mapping: `{field_name: {action: "clean"|"skip"|"drop"}}`.
+- Request includes a `field_policy` mapping: `{field_name: "clean"|"skip"|"drop"}`.
 - Unknown fields default to `clean`.
 - Returns the same shape as input (JSON array / CSV / Parquet) with cleaning applied and a summary report.
 
@@ -278,9 +278,9 @@ pii-cleaner/
 {
   "records": [{"name": "John Doe", "note": "call me at 555-0100", "id": 42}],
   "field_policy": {
-    "name": {"action": "clean"},
-    "note": {"action": "clean"},
-    "id":   {"action": "skip"}
+    "name": "clean",
+    "note": "clean",
+    "id":   "skip"
   }
 }
 ```
