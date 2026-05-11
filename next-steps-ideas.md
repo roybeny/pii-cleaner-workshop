@@ -8,24 +8,14 @@ these are ideas that can be used for later use cases - building on this service
   Submit job, poll for status, download results. For large files and bulk datasets.
   3. [ ] Streaming / SSE
   Token-stream cleaning for LLM output pipelines. Adds complexity around buffering.
-  4. [ ] Python SDK / library
-  Importable package in addition to the service. Useful for workshop attendees.
-  5. [ ] Type something
-
+  
   2. [ ] Mask (e.g., j***@***.com)
   Partial obfuscation preserving length/shape. Useful for debugging.
   3. [ ] Tokenize (reversible)
   Replace with a token that maps back to original via secure vault. Required for workflows needing rehydration.
   4. [ ] Hash (one-way, deterministic)
   SHA-256 with salt. Lets analytics join records without exposing values.
-  5. [ ] Type something
-
-
-
-    Leave for participants (ordered easiest → hardest)
-
-  I'd pick 3–5 of these depending on workshop length:
-
+  
   1. Add a new entity type (e.g., IBAN, IP_ADDRESS, or an internal employee-ID pattern) end-to-end: recognizer + tests + OpenAPI example. Teaches: navigating an unfamiliar
   codebase with an agent, test-first edits. ~45 min.
   2. Add the MASK action alongside REDACT, configurable per entity type in the request. Teaches: feature spanning request schema → core → response. ~1–2 hrs.
@@ -46,11 +36,10 @@ these are ideas that can be used for later use cases - building on this service
   If this split sounds right, I'll bake it into the PRD as an explicit "MVP vs. Workshop Extensions" section so the document itself serves as both the spec and the exercise
   list. Want me to proceed with the remaining clarifications (scale, auth, compliance) and write it up?
 
-
-    2. OAuth2 / OIDC (JWT)
+  2. OAuth2 / OIDC (JWT)
      For end-user or SSO-driven access. More moving parts, more to teach.
   3. mTLS
      Service-to-service in trusted networks. No human-facing auth. Fits air-gapped well.
   4. API keys + mTLS (defense in depth)
      Both layers. Realistic for air-gapped production but adds setup friction.
-  5. Type something.
+  
