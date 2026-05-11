@@ -1,8 +1,22 @@
 # PII Cleaner
 
-Production-grade PII (Personally Identifiable Information) detection and redaction service. Synchronous REST API, stateless, designed for air-gapped on-prem deployment, SOC 2 + GDPR aware.
+PII Cleaner is a self-contained HTTP service that scrubs personally identifiable information from text and structured records before that data ever leaves your boundary — prompts sent to third-party LLMs, analytics events shipped to warehouses, application logs flowing to aggregators, records loaded into downstream pipelines. Callers POST text (or a JSON batch of records with a per-field policy), the service detects PII using a hybrid engine ([Microsoft Presidio](https://microsoft.github.io/presidio/): regex recognizers for deterministic patterns like email, phone, credit card, IBAN, SSN, and a spaCy NER model for harder entities like names, locations, and organizations), and returns the text with every hit replaced by a `[TYPE]` placeholder plus a structured detection report that contains the entity types and offsets but never the original values.
+
+It is designed for production from day one: **stateless** and horizontally scalable, **air-gap-friendly** (the spaCy model is baked into the container image — no network egress at runtime), **multi-tenant** via Argon2id-hashed API keys with zero-downtime rotation and per-tenant token-bucket rate limits, and built against **SOC 2 + GDPR processor** obligations (request payloads are never persisted, logs carry type counts but no entity values, and every request produces a tamper-evident HMAC-chained audit event). Policy is configurable per tenant *and* per request — which entity types are active, per-type confidence thresholds, per-field actions for structured payloads — so callers can trade precision against recall for their specific use case. Observability is first-class: structured JSON logs with a processor that blocks known PII field names, Prometheus metrics (request rate, latency histograms, per-entity-type detection counters), and optional OpenTelemetry tracing.
 
 Full product & design spec: [docs/SPEC.md](docs/SPEC.md).
+
+## About the spaCy model (`en_core_web_lg`)
+
+PII detection runs on [Microsoft Presidio](https://microsoft.github.io/presidio/), which pairs regex recognizers (for emails, phone numbers, credit cards, etc.) with a spaCy NER model that catches entities regex cannot — names (`PERSON`), locations, organizations, dates, etc.
+
+We require `en_core_web_lg` specifically:
+
+- **`lg` (~750 MB)** — higher-accuracy word vectors; our recall/precision targets in [SPEC §1.9](docs/SPEC.md) assume this model.
+- `md` (~40 MB) — reduced accuracy, especially on `PERSON` and `LOCATION`. Not supported.
+- `sm` (~12 MB) — fast but materially worse at NER. Not supported.
+
+The model is a one-time ~750 MB download during setup (`python -m spacy download en_core_web_lg`). In the container image it is **baked in at build time** (see [`Dockerfile`](Dockerfile)) so the running service never reaches out to the network — this is what makes the air-gapped posture possible. The first request after process start triggers model load (cold start ≤ 15 s), which is why `/health/ready` only returns 200 once the model is in memory.
 
 ## Features
 
