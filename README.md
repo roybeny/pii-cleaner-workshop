@@ -1,12 +1,17 @@
 # PII Cleaner
 
+> Can't afford to read? Jump to the [Quickstart]
+> (#quickstart) to get a local instance running in a
+> few minutes.
+
+
 An HTTP service that strips PII from text and structured records before data leaves your boundary — useful for cleaning LLM prompts, analytics events, logs, or pipeline payloads. POST text (or a JSON batch), get back redacted output and a detection report. Detection uses [Microsoft Presidio](https://microsoft.github.io/presidio/) — regex for emails, phones, credit cards, SSNs, and a spaCy NER model for names, locations, and organizations.
 
 Built for production: stateless and air-gap-friendly (no network egress at runtime), multi-tenant API keys with zero-downtime rotation, SOC 2 + GDPR posture, configurable per-tenant and per-request policy, and structured JSON logs + Prometheus metrics.
 
 Full product & design spec: [docs/SPEC.md](docs/SPEC.md).
 
-## About the spaCy model (`en_core_web_lg`)
+## About the spaCy model ('en_core_web_lg')
 
 PII detection runs on [Microsoft Presidio](https://microsoft.github.io/presidio/), which pairs regex recognizers (for emails, phone numbers, credit cards, etc.) with a spaCy NER model that catches entities regex cannot — names (`PERSON`), locations, organizations, dates, etc.
 
@@ -25,7 +30,7 @@ The model is a one-time ~750 MB download during setup (`python -m spacy download
 - Tenant API keys (Argon2id), per-tenant rate limiting, tamper-evident audit log.
 - Prometheus metrics, structured JSON logs (PII-blocking processor), optional OpenTelemetry.
 
-## Quickstart (local, 60 seconds)
+## Quickstart
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
