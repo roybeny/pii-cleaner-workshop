@@ -30,7 +30,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
-    init_audit(load_hmac_key(settings.audit_hmac_key_file))
+    init_audit(
+        load_hmac_key(settings.audit_hmac_key_file, require=settings.require_audit_key)
+    )
 
     app = FastAPI(
         title="PII Cleaner",
@@ -47,12 +49,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.state.settings = settings
     app.state.tenant_registry = registry
-    app.state.key_verifier = verifier
     app.state.rate_limiter = limiter
 
     register_error_handlers(app)
 
-    # Middleware executes in reverse order of .add: first added = outermost.
+    # Starlette evaluates middleware in reverse add order: LAST added = outermost.
+    # Order below produces request flow: RequestContext -> Metrics -> Auth -> RateLimit -> route.
+    # Auth must precede RateLimit so `tenant_id` is set on request.state before the limiter runs.
     app.add_middleware(RateLimitMiddleware, limiter=limiter)
     app.add_middleware(AuthMiddleware, verifier=verifier)
     app.add_middleware(MetricsMiddleware)

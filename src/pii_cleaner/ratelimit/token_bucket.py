@@ -13,7 +13,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from pii_cleaner.config.settings import Settings, TenantRegistry
-from pii_cleaner.errors import ErrorCode
+from pii_cleaner.errors import ErrorCode, error_envelope
 
 
 @dataclass
@@ -83,13 +83,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if not allowed:
             return JSONResponse(
                 status_code=429,
-                content={
-                    "error": {
-                        "code": ErrorCode.RATE_LIMITED.value,
-                        "message": "Rate limit exceeded",
-                        "request_id": getattr(request.state, "request_id", None),
-                    }
-                },
+                content=error_envelope(
+                    ErrorCode.RATE_LIMITED.value,
+                    "Rate limit exceeded",
+                    getattr(request.state, "request_id", None),
+                ),
                 headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
             )
         response = await call_next(request)

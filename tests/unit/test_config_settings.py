@@ -31,7 +31,11 @@ def test_reload_picks_up_new_tenants(tmp_path: Path) -> None:
     assert {t.id for t in registry.all()} == {"acme", "globex"}
 
 
-def test_reload_with_missing_file_clears_registry(tmp_path: Path) -> None:
+def test_reload_with_missing_file_preserves_prior_state(tmp_path: Path) -> None:
+    # A transiently missing tenants.yaml on SIGHUP (secret rotation, FS hiccup) must
+    # NOT blank out the in-memory registry. Wiping it turns every request into a 401
+    # with no correlated log signal — exactly the kind of silent failure that takes
+    # hours to diagnose in production.
     path = tmp_path / "tenants.yaml"
     _write_tenants(path, ["acme"])
     registry = TenantRegistry(path)
@@ -39,8 +43,51 @@ def test_reload_with_missing_file_clears_registry(tmp_path: Path) -> None:
 
     path.unlink()
     registry.reload()
-    assert registry.all() == []
-    assert registry.get("acme") is None
+    assert registry.get("acme") is not None
+
+
+def test_reload_with_malformed_yaml_preserves_prior_state(tmp_path: Path) -> None:
+    path = tmp_path / "tenants.yaml"
+    _write_tenants(path, ["acme"])
+    registry = TenantRegistry(path)
+
+    path.write_text("this: is: not: valid: yaml: [[[")
+    registry.reload()
+    assert registry.get("acme") is not None
+
+
+def test_reload_invalidates_key_verifier_cache(tmp_path: Path) -> None:
+    # Revoking a key requires: (a) remove it from tenants.yaml, (b) SIGHUP. If the
+    # KeyVerifier cache isn't invalidated on reload, revoked tokens keep authenticating
+    # for up to the LRU window. A test locks this in — see review finding "Top #3".
+    from pii_cleaner.auth.keys import KeyVerifier
+
+    key_one = "key-one-value"
+    key_two = "key-two-value"
+    hasher = PasswordHasher()
+    path = tmp_path / "tenants.yaml"
+    path.write_text(
+        "tenants:\n"
+        "  - id: acme\n"
+        "    keys:\n"
+        f'      - hash: "{hasher.hash(key_one)}"\n'
+        f'      - hash: "{hasher.hash(key_two)}"\n'
+    )
+    registry = TenantRegistry(path)
+    verifier = KeyVerifier(registry)
+    assert verifier.verify(key_one) == "acme"  # primes the cache
+
+    # Rotate: remove key_one from disk + SIGHUP reload. Cache must be invalidated so
+    # the revoked token is rejected on the next call.
+    path.write_text(
+        "tenants:\n"
+        "  - id: acme\n"
+        "    keys:\n"
+        f'      - hash: "{hasher.hash(key_two)}"\n'
+    )
+    registry.reload()
+    assert verifier.verify(key_one) is None
+    assert verifier.verify(key_two) == "acme"
 
 
 def test_env_vars_map_to_settings_fields(monkeypatch: pytest.MonkeyPatch) -> None:

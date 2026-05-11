@@ -9,7 +9,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from pii_cleaner.auth.keys import KeyVerifier, extract_bearer_token
-from pii_cleaner.errors import ErrorCode
+from pii_cleaner.errors import ErrorCode, error_envelope
 
 _UNAUTHENTICATED_PATHS = frozenset(
     {"/health/live", "/health/ready", "/metrics", "/docs", "/redoc", "/openapi.json"}
@@ -19,13 +19,11 @@ _UNAUTHENTICATED_PATHS = frozenset(
 def _unauthorized(request: Request, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=401,
-        content={
-            "error": {
-                "code": ErrorCode.UNAUTHORIZED.value,
-                "message": message,
-                "request_id": getattr(request.state, "request_id", None),
-            }
-        },
+        content=error_envelope(
+            ErrorCode.UNAUTHORIZED.value,
+            message,
+            getattr(request.state, "request_id", None),
+        ),
     )
 
 

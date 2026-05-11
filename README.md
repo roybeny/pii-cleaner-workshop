@@ -83,10 +83,12 @@ All settings are environment variables prefixed `PII_`.
 | `PII_MAX_RECORDS_BYTES` | `10485760` | Max request body for `/v1/clean/records`. |
 | `PII_DEFAULT_RPS` | `100` | Fallback per-tenant rate limit. |
 | `PII_DEFAULT_BURST` | `200` | Fallback per-tenant burst. |
+| `PII_DEFAULT_THRESHOLD` | `0.5` | Fallback per-entity confidence threshold. |
 | `PII_REQUEST_TIMEOUT_SECONDS` | `10.0` | Hard cap per request. |
 | `PII_OTEL_ENABLED` | `false` | Opt-in tracing. |
 | `PII_OTEL_ENDPOINT` | — | OTLP gRPC endpoint. |
 | `PII_AUDIT_HMAC_KEY_FILE` | — | HMAC key file for audit chain. |
+| `PII_REQUIRE_AUDIT_KEY` | `false` | When `true`, service refuses to start without a readable `PII_AUDIT_HMAC_KEY_FILE`. Set in production. |
 
 ### Tenant registry
 

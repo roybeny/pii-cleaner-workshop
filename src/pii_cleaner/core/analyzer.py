@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import Protocol
 
 from presidio_analyzer import AnalyzerEngine, RecognizerResult
 from presidio_anonymizer import AnonymizerEngine
@@ -19,10 +18,6 @@ class DetectedEntity:
     score: float
 
 
-class AnalyzerProtocol(Protocol):
-    def analyze(self, text: str, entities: list[str], language: str) -> list[RecognizerResult]: ...
-
-
 class AnalyzerHolder:
     """Holds the initialized Presidio engines; lazy-loaded to keep imports cheap."""
 
@@ -32,11 +27,11 @@ class AnalyzerHolder:
         self._anonymizer: AnonymizerEngine | None = None
 
     def _ensure(self) -> tuple[AnalyzerEngine, AnonymizerEngine]:
-        if self._analyzer is None or self._anonymizer is None:
+        # Double-check: first guard is lock-free for the hot path; second prevents duplicate init.
+        if self._analyzer is None:
             with self._lock:
                 if self._analyzer is None:
                     self._analyzer = AnalyzerEngine()
-                if self._anonymizer is None:
                     self._anonymizer = AnonymizerEngine()
         assert self._analyzer is not None
         assert self._anonymizer is not None
@@ -63,7 +58,10 @@ class AnalyzerHolder:
         operators = {
             e.type: OperatorConfig("replace", {"new_value": f"[{e.type}]"}) for e in entities
         }
-        presidio_results = [_to_recognizer_result(e) for e in entities]
+        presidio_results = [
+            RecognizerResult(entity_type=e.type, start=e.start, end=e.end, score=e.score)
+            for e in entities
+        ]
         result = anonymizer.anonymize(
             text=text,
             analyzer_results=presidio_results,
@@ -72,15 +70,14 @@ class AnalyzerHolder:
         return str(result.text)
 
 
-def _to_recognizer_result(e: DetectedEntity) -> RecognizerResult:
-    return RecognizerResult(entity_type=e.type, start=e.start, end=e.end, score=e.score)
-
-
 _holder: AnalyzerHolder | None = None
+_holder_lock = threading.Lock()
 
 
 def get_analyzer() -> AnalyzerHolder:
     global _holder
     if _holder is None:
-        _holder = AnalyzerHolder()
+        with _holder_lock:
+            if _holder is None:
+                _holder = AnalyzerHolder()
     return _holder

@@ -1,9 +1,9 @@
-"""Structured-record cleaning endpoint (JSON; CSV/Parquet for future extension)."""
+"""Structured-record cleaning endpoint (JSON only)."""
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from collections import Counter
 
 from fastapi import APIRouter, Request
 
@@ -11,6 +11,7 @@ from pii_cleaner.api.schemas import (
     CleanRecordsRequest,
     CleanRecordsResponse,
     FieldAction,
+    Record,
 )
 from pii_cleaner.core.analyzer import get_analyzer
 from pii_cleaner.core.cleaner import clean_text
@@ -49,14 +50,13 @@ async def clean_records_endpoint(
     policy = resolve_policy(tenant, body.policy, settings)
     analyzer = get_analyzer()
 
-    def _run() -> tuple[list[dict[str, Any]], dict[str, int]]:
-        out_records: list[dict[str, Any]] = []
-        aggregate: dict[str, int] = {}
+    def _run() -> tuple[list[Record], dict[str, int]]:
+        out_records: list[Record] = []
+        aggregate: Counter[str] = Counter()
         for record in body.records:
-            new_record: dict[str, Any] = {}
+            new_record: Record = {}
             for field, value in record.items():
-                action = body.field_policy.get(field)
-                effective = action.action if action else FieldAction.CLEAN
+                effective = body.field_policy.get(field, FieldAction.CLEAN)
                 if effective == FieldAction.DROP:
                     continue
                 if effective == FieldAction.SKIP or not isinstance(value, str):
@@ -64,10 +64,9 @@ async def clean_records_endpoint(
                     continue
                 result = clean_text(analyzer, value, policy)
                 new_record[field] = result.cleaned_text
-                for k, v in result.report.items():
-                    aggregate[k] = aggregate.get(k, 0) + v
+                aggregate.update(result.report)
             out_records.append(new_record)
-        return out_records, aggregate
+        return out_records, dict(aggregate)
 
     try:
         records, report = await asyncio.wait_for(

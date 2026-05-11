@@ -62,19 +62,24 @@ class MetricsMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        path = request.url.path
-        if path == "/metrics":
+        if request.url.path == "/metrics":
             return await call_next(request)
         started = perf_counter()
-        response = await call_next(request)
-        duration = perf_counter() - started
-        tenant = getattr(request.state, "tenant_id", None) or "anonymous"
-        endpoint = _route_pattern(request) or path
-        requests_total.labels(endpoint=endpoint, tenant=tenant, status=response.status_code).inc()
-        request_duration.labels(endpoint=endpoint, tenant=tenant).observe(duration)
-        if response.status_code == 429:
-            ratelimit_rejections_total.labels(tenant=tenant).inc()
-        return response
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            return response
+        finally:
+            duration = perf_counter() - started
+            tenant = getattr(request.state, "tenant_id", None) or "anonymous"
+            # Use the matched route pattern when available; fall back to a constant so
+            # unrouted/probe traffic (e.g. /wp-admin, /.git) doesn't blow up cardinality.
+            endpoint = _route_pattern(request) or "unmatched"
+            requests_total.labels(endpoint=endpoint, tenant=tenant, status=status_code).inc()
+            request_duration.labels(endpoint=endpoint, tenant=tenant).observe(duration)
+            if status_code == 429:
+                ratelimit_rejections_total.labels(tenant=tenant).inc()
 
 
 def _route_pattern(request: Request) -> str | None:

@@ -85,11 +85,7 @@ async def test_records_endpoint_cleans_per_field(
                 "records": [
                     {"name": "John Doe", "note": "email a@b.co", "id": 42},
                 ],
-                "field_policy": {
-                    "name": {"action": "clean"},
-                    "note": {"action": "clean"},
-                    "id": {"action": "skip"},
-                },
+                "field_policy": {"name": "clean", "note": "clean", "id": "skip"},
             },
         )
     assert r.status_code == 200, r.text
@@ -109,23 +105,47 @@ async def test_records_endpoint_drops_fields(
             headers={"Authorization": f"Bearer {api_keys[0]}"},
             json={
                 "records": [{"keep": "fine", "remove": "gone"}],
-                "field_policy": {
-                    "remove": {"action": "drop"},
-                },
+                "field_policy": {"remove": "drop"},
             },
         )
     assert r.status_code == 200
     assert r.json()["records"] == [{"keep": "fine"}]
 
 
-async def test_health_endpoints(client: httpx.AsyncClient) -> None:
+async def test_records_endpoint_rejects_nested_structures(
+    client: httpx.AsyncClient, api_keys: tuple[str, str]
+) -> None:
+    # Nested record values are a PII-leak surface: the per-field loop only cleans
+    # top-level strings. Schema must reject nested dicts/lists at parse time so a
+    # caller sending {"user": {"email": "..."}} gets 400, not a silent pass-through.
+    async with client as ac:
+        r = await ac.post(
+            "/v1/clean/records",
+            headers={"Authorization": f"Bearer {api_keys[0]}"},
+            json={"records": [{"user": {"email": "a@b.co"}}]},
+        )
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "INVALID_REQUEST"
+
+
+async def test_health_live_is_200_regardless_of_analyzer_state(
+    client: httpx.AsyncClient,
+) -> None:
     async with client as ac:
         live = await ac.get("/health/live")
-        ready = await ac.get("/health/ready")
     assert live.status_code == 200
-    # Readiness might be 503 on first request if analyzer not yet warmed; we warm in lifespan
-    # but httpx.ASGITransport with lifespan off by default — accept either.
-    assert ready.status_code in (200, 503)
+
+
+async def test_health_ready_is_200_after_analyzer_is_warm(client: httpx.AsyncClient) -> None:
+    # Warm the analyzer deterministically rather than depending on lifespan timing —
+    # "accept either 200 or 503" is a meaningless assertion that masks a broken probe.
+    from pii_cleaner.core.analyzer import get_analyzer
+
+    get_analyzer().warm()
+    async with client as ac:
+        ready = await ac.get("/health/ready")
+    assert ready.status_code == 200
+    assert ready.json() == {"status": "ok", "analyzer": True}
 
 
 async def test_metrics_endpoint_public(client: httpx.AsyncClient) -> None:

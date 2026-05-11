@@ -66,3 +66,36 @@ async def test_pii_values_not_in_logs_or_response_on_413(
     logs = log_buffer.getvalue()
     assert secret_email not in logs
     assert text not in logs
+
+
+async def test_pii_values_not_in_logs_for_records_endpoint(
+    app: Any, api_keys: tuple[str, str], log_buffer: io.StringIO
+) -> None:
+    # The records endpoint is a separate code path; a "no PII in logs" gate that
+    # only covers /v1/clean misses half the surface.
+    secret_email = "dana+hushhush@example.com"
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        r = await ac.post(
+            "/v1/clean/records",
+            headers={"Authorization": f"Bearer {api_keys[0]}"},
+            json={"records": [{"note": f"reach {secret_email}"}]},
+        )
+    assert r.status_code == 200
+    assert secret_email not in log_buffer.getvalue()
+
+
+async def test_redact_pii_fields_scrubs_nested_structures() -> None:
+    # The structlog processor must recurse: a log call like
+    # logger.info("x", extra={"text": "secret"}) would otherwise leak PII nested
+    # one level below the top-level forbidden-key check.
+    from pii_cleaner.observability.logging import _redact_pii_fields
+
+    scrubbed = _redact_pii_fields(
+        None,
+        "info",
+        {"msg": "ok", "extra": {"text": "secret", "safe": "ok"}, "nested": [{"value": "leak"}]},
+    )
+    assert scrubbed["extra"]["text"] == "<redacted>"
+    assert scrubbed["extra"]["safe"] == "ok"
+    assert scrubbed["nested"][0]["value"] == "<redacted>"

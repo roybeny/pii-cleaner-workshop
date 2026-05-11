@@ -8,10 +8,9 @@ from fastapi import APIRouter, Request
 
 from pii_cleaner.api.schemas import CleanRequest, CleanResponse, DetectedEntityOut
 from pii_cleaner.core.analyzer import get_analyzer
-from pii_cleaner.core.cleaner import clean_text
+from pii_cleaner.core.cleaner import CleanResult, clean_text
 from pii_cleaner.core.policy import resolve_policy
 from pii_cleaner.errors import (
-    InvalidPolicyError,
     PayloadTooLargeError,
     RequestTimeoutError,
     UnauthorizedError,
@@ -38,39 +37,32 @@ async def clean_endpoint(request: Request, body: CleanRequest) -> CleanResponse:
     if tenant is None:
         raise UnauthorizedError("Unknown tenant")
 
-    try:
-        policy = resolve_policy(tenant, body.policy, settings)
-    except InvalidPolicyError:
-        raise
-
+    policy = resolve_policy(tenant, body.policy, settings)
     analyzer = get_analyzer()
 
-    def _run() -> tuple[str, list]:
-        result = clean_text(analyzer, body.text, policy)
-        return result.cleaned_text, result.entities
+    def _run() -> CleanResult:
+        return clean_text(analyzer, body.text, policy)
 
     try:
-        cleaned_text, entities = await asyncio.wait_for(
+        result = await asyncio.wait_for(
             asyncio.to_thread(_run), timeout=settings.request_timeout_seconds
         )
     except TimeoutError as exc:
         raise RequestTimeoutError("Cleaning timed out") from exc
 
-    report: dict[str, int] = {}
-    for e in entities:
-        report[e.type] = report.get(e.type, 0) + 1
-        entities_detected_total.labels(type=e.type, tenant=tenant_id).inc()
+    for entity_type, count in result.report.items():
+        entities_detected_total.labels(type=entity_type, tenant=tenant_id).inc(count)
 
-    request.state.entity_counts = report
+    request.state.entity_counts = result.report
     request_id = getattr(request.state, "request_id", None)
 
     response = CleanResponse(
-        cleaned_text=cleaned_text,
+        cleaned_text=result.cleaned_text,
         entities=[
             DetectedEntityOut(type=e.type, start=e.start, end=e.end, score=e.score)
-            for e in entities
+            for e in result.entities
         ],
-        report=report,
+        report=result.report,
         request_id=request_id,
     )
     payload_bytes.labels(endpoint="/v1/clean", direction="out").observe(

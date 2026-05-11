@@ -7,22 +7,35 @@ import hmac
 import threading
 from collections import OrderedDict
 
+import structlog
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 from pii_cleaner.config.settings import TenantRegistry
+
+logger = structlog.get_logger(__name__)
 
 _hasher = PasswordHasher()
 _CACHE_MAX = 1024
 
 
 class KeyVerifier:
-    """Verifies bearer tokens against the tenant registry."""
+    """Verifies bearer tokens against the tenant registry.
+
+    Security invariants:
+    - Always iterates every (tenant, key) pair — even after a match — to flatten
+      timing and prevent tenant-existence enumeration via response time.
+    - Caches successful verifications keyed by a SHA256 fingerprint of the token,
+      so the raw bearer is never retained in process memory past verification.
+    - Corrupt-hash entries in tenants.yaml log a WARNING (once per verify call)
+      but must not take down auth for other tenants.
+    """
 
     def __init__(self, registry: TenantRegistry) -> None:
         self._registry = registry
         self._lock = threading.Lock()
         self._cache: OrderedDict[str, str] = OrderedDict()
+        registry.register_reload_listener(self.invalidate)
 
     @staticmethod
     def _fingerprint(token: str) -> str:
@@ -47,7 +60,7 @@ class KeyVerifier:
             self._cache.clear()
 
     def verify(self, token: str) -> str | None:
-        """Return tenant_id if token is valid, else None. Iterates all tenants on failure."""
+        """Return tenant_id if token is valid, else None."""
         if not token:
             return None
         fp = self._fingerprint(token)
@@ -56,16 +69,21 @@ class KeyVerifier:
             return cached
 
         matched_tenant: str | None = None
-        # Iterate every (tenant, key) pair regardless of early match to flatten timing.
         for tenant in self._registry.all():
-            for key in tenant.keys:
+            for idx, key in enumerate(tenant.keys):
                 try:
                     _hasher.verify(key.hash, token)
                     if matched_tenant is None:
                         matched_tenant = tenant.id
                 except VerifyMismatchError:
                     continue
-                except Exception:  # noqa: S112 - corrupt hash: skip silently
+                except (InvalidHashError, VerificationError) as exc:
+                    logger.warning(
+                        "corrupt_tenant_hash",
+                        tenant_id=tenant.id,
+                        key_index=idx,
+                        error_type=type(exc).__name__,
+                    )
                     continue
 
         if matched_tenant is not None:

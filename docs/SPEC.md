@@ -4,7 +4,7 @@
 
 This document specifies a **production-grade PII (Personally Identifiable Information) cleaning service**, implemented in Python, that will also serve as the codebase for a developers' workshop on working with coding agents. The service detects and redacts PII in plain text and structured data, exposed via a synchronous REST API. The workshop objective motivates a design that is realistic (not a toy), readable (participants will navigate it), and modular (participants will extend it) — all while meeting the non-functional requirements of a real B2B SaaS component.
 
-The repository (`/Users/roy.benyosef/dev/pii-cleaner`) is currently empty except for `.git`; this is a greenfield design.
+This document describes the target design. Workshop exercises extend the implementation toward features that are currently spec'd but not yet built (custom recognizer loading, CSV/Parquet I/O, per-operation tracing spans, HASH/MASK operators, etc.). See [`WORKSHOP-USECASES.md`](WORKSHOP-USECASES.md) for which parts of this spec are exercises rather than merged code.
 
 ---
 
@@ -117,7 +117,7 @@ Teams integrating LLMs, analytics pipelines, and log aggregation routinely send 
 - **Secrets management**: all secrets via env vars or mounted files; never in code, never logged.
 
 ### GDPR (processor) controls
-- **Data minimization**: request payloads are **never persisted** by the service. Memory is zeroed after response. No swap (container runs with `--memory-swappiness=0`).
+- **Data minimization**: request payloads are **never persisted** by the service; buffers are released when the handler returns. Operators are expected to configure the container runtime for no-swap (e.g. `--memory-swappiness=0` on Docker, equivalent settings elsewhere); this is an operator responsibility, not a service default.
 - **No outbound telemetry**: air-gapped posture; all metrics/logs stay in the customer's network.
 - **Processor DPA-friendly**: documented sub-processors (none, by design), documented retention (zero for payloads, 90 days for structured logs — customer-configurable).
 - **Deletion / erasure**: because no payloads are stored, right-to-erasure is trivially satisfied for request data. Audit logs contain no PII values (types only), so they are not subject to erasure of the data subject's personal data beyond standard log rotation.
@@ -377,11 +377,10 @@ Reload on `SIGHUP` (no restart needed for key rotation).
 Every request emits a single log line with:
 ```
 timestamp, level, event, request_id, tenant_id, method, path,
-status, latency_ms, bytes_in, bytes_out,
-detected_entity_counts (map of type→count),
-client_ip
+status, latency_ms, entity_counts (map of type→count), client_ip
 ```
-**Forbidden fields**: `text`, `cleaned_text`, entity values, raw record field values. Enforced by a structlog processor that blocks known-dangerous keys.
+Payload byte sizes are exposed via the `pii_payload_bytes` histogram rather than per-request log fields.
+**Forbidden fields**: `text`, `cleaned_text`, entity values, raw record field values. Enforced by a structlog processor that rewrites known-dangerous keys to `<redacted>`, including inside nested structures.
 
 ### Metrics (`/metrics`)
 - `pii_requests_total{endpoint, tenant, status}` (counter)
@@ -411,9 +410,9 @@ client_ip
 
 ## 2.12 Deployment
 
-- **Container image**: multi-stage build. Builder installs deps and `python -m spacy download en_core_web_lg`; runtime uses Chainguard `python:3.12` with only the app + installed site-packages + model.
+- **Container image**: multi-stage build. Builder installs deps and `python -m spacy download en_core_web_lg`; runtime uses `python:3.12-slim` with only the app + installed site-packages + model. A hardened/distroless base (Chainguard, Wolfi) is a future-work item.
 - **Image is self-contained**: model baked in, no outbound fetches at runtime.
-- **SBOM**: generated via `syft` in CI; signed with `cosign`.
+- **SBOM + image signing**: planned (syft + cosign); not yet wired in CI.
 - **Runtime**: `docker run` or `docker compose up` with tenants file + HMAC key mounted as read-only volumes. Run multiple replicas behind any reverse proxy / load balancer (nginx, HAProxy, Envoy).
 - **Resource targets per container**: request `cpu: 500m, memory: 1Gi`; limit `cpu: 2, memory: 2Gi`.
 - **Graceful shutdown**: SIGTERM → stop accepting new requests, drain in-flight within 30 s, exit.
@@ -426,7 +425,7 @@ Pipeline stages (GitHub Actions assumed, portable to GitLab):
 3. **Integration tests**: spin up app via `httpx.AsyncClient`, run end-to-end scenarios
 4. **Security**: `pip-audit`, container scan (Trivy/Grype), fail on High/Critical
 5. **Build**: multi-arch container (`linux/amd64`, `linux/arm64`)
-6. **SBOM + sign**: syft + cosign
+6. **SBOM + sign** *(planned, not yet wired)*: syft + cosign
 7. **Publish**: to customer-accessible registry (not a public one in air-gap scenarios)
 
 ## 2.14 Testing strategy
@@ -434,12 +433,12 @@ Pipeline stages (GitHub Actions assumed, portable to GitLab):
 | Layer | What | Tools |
 |---|---|---|
 | Unit | Cleaner core, policy resolution, auth, rate limiter | pytest |
-| Property-based | Regex recognizers don't produce false positives on known-safe strings | hypothesis |
 | Integration | End-to-end `POST /v1/clean` and `/v1/clean/records` | pytest + httpx.AsyncClient |
-| Contract | OpenAPI schema snapshot test | schemathesis |
-| Performance | Locust scenario hitting target RPS; asserts p95 latency | locust (in CI on tagged runs) |
 | Security | No PII in logs test (submit known PII, assert absent in captured logs) | pytest fixture capturing stdout |
-| Evaluation | Detection precision/recall on a curated labeled dataset (`tests/fixtures/eval/`) | custom harness, reports to CI |
+| Property-based *(future)* | Regex recognizers don't produce false positives on known-safe strings | hypothesis |
+| Contract *(future)* | OpenAPI schema snapshot test | schemathesis |
+| Performance *(future)* | Scenario hitting target RPS; asserts p95 latency | locust / k6 (in CI on tagged runs) |
+| Evaluation *(future)* | Detection precision/recall on a curated labeled dataset | custom harness, reports to CI |
 
 ## 2.15 Scalability & performance plan
 
@@ -462,7 +461,7 @@ Pipeline stages (GitHub Actions assumed, portable to GitLab):
 | Regex ReDoS in custom recognizer | Worker stuck, availability hit | Wrap custom recognizers in timeout; document ReDoS pitfalls; reject patterns that fail a static lint |
 | PII leakage via logs | Compliance incident | Structlog processor blocks dangerous keys; test asserts absence |
 | Timing attack leaks tenant existence | Minor info leak | Constant-time compare; iterate all candidates |
-| Large payload OOM | Replica crash | Hard size limit in middleware + per-request timeout |
+| Large payload OOM | Replica crash | Hard size limit enforced per endpoint + per-request timeout |
 | NER false positives redacting benign text | Data quality hit | Configurable per-type thresholds; detection report lets callers audit |
 | NER false negatives missing PII | Compliance hit | Use `en_core_web_lg` not `sm`; combine with regex recognizers; eval set in CI |
 | Tenant key compromise | Unauthorized access | Dual-active keys for instant rotation via SIGHUP |

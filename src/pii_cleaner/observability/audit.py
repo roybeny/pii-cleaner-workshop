@@ -6,13 +6,18 @@ import hashlib
 import hmac
 import json
 import logging
+import secrets
 import sys
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import structlog
+
 _GENESIS = "0" * 64
+
+_logger = structlog.get_logger(__name__)
 
 
 class AuditLogger:
@@ -43,6 +48,11 @@ class AuditLogger:
             self._logger.addHandler(default)
 
     def emit(self, event: dict[str, Any]) -> None:
+        """Append one chained record.
+
+        On write failure, the chain head is NOT advanced, and AuditWriteError is raised.
+        Callers must decide whether to fail the request (compliance default) or degrade.
+        """
         record_event = {
             "timestamp": datetime.now(UTC).isoformat(),
             **event,
@@ -53,16 +63,26 @@ class AuditLogger:
                 self._key, (self._prev_hash + body).encode("utf-8"), hashlib.sha256
             ).hexdigest()
             record = {"prev_hash": self._prev_hash, "hash": digest, "event": record_event}
+            try:
+                self._logger.info(json.dumps(record, sort_keys=True, separators=(",", ":")))
+            except Exception as exc:
+                _logger.error("audit_write_failed", exc_info=True)
+                raise AuditWriteError(str(exc)) from exc
             self._prev_hash = digest
-            self._logger.info(json.dumps(record, sort_keys=True, separators=(",", ":")))
+
+
+class AuditWriteError(RuntimeError):
+    """Raised when an audit record could not be persisted."""
 
 
 _audit: AuditLogger | None = None
+_audit_lock = threading.Lock()
 
 
 def init_audit(key: bytes) -> AuditLogger:
     global _audit
-    _audit = AuditLogger(key)
+    with _audit_lock:
+        _audit = AuditLogger(key)
     return _audit
 
 
@@ -70,14 +90,31 @@ def get_audit() -> AuditLogger | None:
     return _audit
 
 
-def load_hmac_key(path: Path | None) -> bytes:
-    """Load HMAC key from file; fall back to a random dev key (not for prod)."""
-    if path is not None and path.exists():
+def load_hmac_key(path: Path | None, *, require: bool = False) -> bytes:
+    """Load HMAC key from file.
+
+    If `path` is provided but unreadable/empty, raises — an operator who sets
+    PII_AUDIT_HMAC_KEY_FILE expects it to be used, so silently falling back is
+    the wrong default.
+
+    If `path` is None:
+      - `require=True` raises (use in production).
+      - `require=False` returns an ephemeral key and logs a WARNING. The audit
+        chain won't survive restart — acceptable only for development.
+    """
+    if path is not None:
+        if not path.exists():
+            raise FileNotFoundError(f"HMAC key file not found: {path}")
         data = path.read_bytes().strip()
         if not data:
             raise ValueError(f"HMAC key file {path} is empty")
         return data
-    # Dev fallback: ephemeral key. Logs won't be verifiable across restarts.
-    import secrets
-
+    if require:
+        raise RuntimeError(
+            "audit_hmac_key_file is required (PII_REQUIRE_AUDIT_KEY=true) but was not set"
+        )
+    _logger.warning(
+        "audit_hmac_key_ephemeral",
+        reason="no audit_hmac_key_file configured; chain will not survive restart",
+    )
     return secrets.token_bytes(32)

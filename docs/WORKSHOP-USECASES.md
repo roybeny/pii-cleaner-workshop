@@ -46,7 +46,7 @@ curl -s localhost:8000/v1/clean \
 **Acceptance criteria.**
 - A written root-cause explanation (one paragraph) — the agent should be able to articulate *why* "call me at" fails and "phone:" works.
 - The fix is implemented in either the policy layer (per-type threshold) or the recognizer layer (extended context list), not both.
-- A new test in `tests/test_cleaner.py` that fails on `master` and passes on the fix branch.
+- A new test in `tests/unit/test_cleaner.py` that fails on `master` and passes on the fix branch.
 - No unrelated changes. `git diff --stat` should touch ≤3 files.
 
 **Stretch.** Add a facilitator-supplied fuzz corpus of 20 phone formats and verify recall.
@@ -65,7 +65,7 @@ curl -s localhost:8000/v1/clean \
 - `src/pii_cleaner/core/recognizers/` — the extension point for custom recognizers.
 - `src/pii_cleaner/config/settings.py` — `DEFAULT_ENTITIES`.
 - `src/pii_cleaner/core/analyzer.py` — where recognizers get registered.
-- `tests/test_cleaner.py` — where to add coverage.
+- `tests/unit/test_cleaner.py` — where to add coverage.
 
 **Acceptance criteria.**
 - A new recognizer registered via the `core/recognizers/` extension point (not inlined into `analyzer.py`).
@@ -88,7 +88,7 @@ curl -s localhost:8000/v1/clean \
 **Files to look at.**
 - `src/pii_cleaner/ratelimit/token_bucket.py` — the bucket and the middleware.
 - `src/pii_cleaner/main.py` — middleware registration order.
-- `tests/test_ratelimit.py` — existing coverage shape.
+- `tests/unit/test_ratelimit.py` — existing coverage shape.
 
 **Acceptance criteria.**
 - Headers present on 2xx responses from both `/v1/clean` and `/v1/clean/records`.
@@ -115,7 +115,7 @@ curl -s localhost:8000/v1/clean \
 - `src/pii_cleaner/core/policy.py` — policy resolution.
 - `src/pii_cleaner/core/cleaner.py` — orchestration.
 - `src/pii_cleaner/core/analyzer.py` — the `OperatorConfig` wiring into Presidio's anonymizer.
-- `tests/test_cleaner.py` and `tests/test_api.py`.
+- `tests/unit/test_cleaner.py` and `tests/integration/test_api.py`.
 
 **Acceptance criteria.**
 - Default behavior unchanged when no `actions` key is supplied (REDACT for every active entity).
@@ -216,7 +216,7 @@ curl -s localhost:8000/v1/clean \
 **Files to look at.**
 - `src/pii_cleaner/observability/audit.py` — the producer. Verifier must mirror this exactly.
 - `pyproject.toml` — `[project.scripts]` for the console entry point.
-- `tests/test_audit.py` — extend with verifier tests.
+- `tests/unit/test_audit.py` — extend with verifier tests.
 
 **Acceptance criteria.**
 - `pip install -e .` exposes `pii-audit-verify` on `$PATH`.

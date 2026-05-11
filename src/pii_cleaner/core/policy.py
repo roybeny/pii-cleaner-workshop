@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pii_cleaner.config.settings import PolicyConfig, Settings, Tenant
+from pii_cleaner.errors import InvalidPolicyError
 
 
 @dataclass(frozen=True)
@@ -27,8 +28,6 @@ def resolve_policy(
 
     unknown = entities - set(settings.default_entities)
     if unknown:
-        from pii_cleaner.errors import InvalidPolicyError
-
         raise InvalidPolicyError(f"Unknown entity types: {sorted(unknown)}")
 
     return ResolvedPolicy(
