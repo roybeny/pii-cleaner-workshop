@@ -36,7 +36,6 @@ dev = [
     "pytest-cov>=6.0,<7.0",
     "httpx>=0.27,<0.28",
     "hypothesis>=6.115,<7.0",
-    "schemathesis>=3.38,<4.0",
     "ruff>=0.7,<0.8",
     "black>=24.10,<25.0",
     "mypy>=1.13,<2.0",
@@ -89,12 +88,7 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-ra --strict-markers --strict-config"
-filterwarnings = [
-    "error",
-    # Third-party deprecations we can't fix; ignore rather than let them break the suite.
-    "ignore::DeprecationWarning:jsonschema",
-    "ignore::DeprecationWarning:schemathesis",
-]
+filterwarnings = ["error"]
 
 [tool.coverage.run]
 branch = true
