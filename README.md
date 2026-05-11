@@ -1,8 +1,6 @@
 # PII Cleaner
 
-> Can't afford to read? Jump to the [Quickstart]
-> (#quickstart) to get a local instance running in a
-> few minutes.
+>Can't afford to read? Jump to the [Quickstart](#quickstart) to get a local instance running in a few minutes.
 
 
 An HTTP service that strips PII from text and structured records before data leaves your boundary — useful for cleaning LLM prompts, analytics events, logs, or pipeline payloads. POST text (or a JSON batch), get back redacted output and a detection report. Detection uses [Microsoft Presidio](https://microsoft.github.io/presidio/) — regex for emails, phones, credit cards, SSNs, and a spaCy NER model for names, locations, and organizations.
