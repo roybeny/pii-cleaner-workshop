@@ -73,7 +73,7 @@ curl -s localhost:8000/v1/clean \
 - A test demonstrating both a positive case (`EMP-123456` → redacted) and a negative case (`EMP-12` → not redacted).
 - The OpenAPI docs served at `/docs` show the new entity in example responses or schema descriptions.
 
-**Stretch.** Make the employee-ID regex configurable per tenant via `config/tenants.yaml` instead of hard-coded.
+**Stretch.** Make the employee-ID regex configurable per tenant via `config/tenants.yaml` instead of hard-coded. Note: `Tenant` currently validates each tenant's `policy.entities` against `DEFAULT_ENTITIES` at load time (see `_policy_entities_supported` in `config/settings.py`). Per-tenant custom entities will need that validator either relaxed or extended to consult a tenant-scoped recognizer list — a useful teaching moment about layered validation.
 
 **Estimated time.** 45–60 min.
 
@@ -81,19 +81,22 @@ curl -s localhost:8000/v1/clean \
 
 ### 3. Rate-limit response headers
 
-**Goal.** Every response must include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`. 429 responses must additionally include a `Retry-After` header in seconds.
+**Current state.** `RateLimitMiddleware` already sets `X-RateLimit-Remaining` on 2xx responses and `Retry-After` on 429 responses. The **missing** headers are `X-RateLimit-Limit` (the configured bucket size) and `X-RateLimit-Reset` (seconds — or Unix timestamp, per the stretch — until the bucket is full again). An existing test (`test_rate_limit_headers`) asserts `x-ratelimit-remaining`; extend it rather than replacing it.
 
-**Why this exercise.** Small surface area, but the middleware stack (`RateLimit → Auth → Metrics → RequestContext` in `main.py`) is easy to break. Great for teaching participants to *verify ordering and headers* with the agent, not just "does the test pass".
+**Goal.** Every response must include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`. Keep `Retry-After` on 429 responses.
+
+**Why this exercise.** Small surface area, but the middleware stack (`RequestContext → Metrics → Auth → RateLimit` in `main.py`, outer → inner) is easy to break. Great for teaching participants to *verify ordering and headers* with the agent, not just "does the test pass". The partial pre-existing implementation is realistic — real tickets usually arrive half-done, and participants must read what's there before adding more.
 
 **Files to look at.**
-- `src/pii_cleaner/ratelimit/token_bucket.py` — the bucket and the middleware.
-- `src/pii_cleaner/main.py` — middleware registration order.
+- `src/pii_cleaner/ratelimit/token_bucket.py` — the bucket and the middleware. `try_consume` already returns `(allowed, remaining, retry_after)`; you'll need the full bucket size for `X-RateLimit-Limit`.
+- `src/pii_cleaner/main.py` — middleware registration order (note the comment: Starlette evaluates in reverse add order; **last added = outermost**).
 - `tests/unit/test_ratelimit.py` — existing coverage shape.
+- `tests/integration/test_api.py` — `test_rate_limit_headers` and `test_rate_limit_triggers_429_with_retry_after` already cover the current behavior.
 
 **Acceptance criteria.**
-- Headers present on 2xx responses from both `/v1/clean` and `/v1/clean/records`.
-- `Retry-After` header present (and correct, within ±1s) on 429 responses.
-- Existing tests still pass; new tests cover both the happy path and the 429 path.
+- All three `X-RateLimit-*` headers present on 2xx responses from both `/v1/clean` and `/v1/clean/records`.
+- `Retry-After` header still present (and correct, within ±1s) on 429 responses.
+- Existing tests still pass; new tests cover the happy path for the new headers and the 429 path.
 - No changes to middleware ordering in `main.py`.
 
 **Stretch.** Expose `X-RateLimit-Reset` as a Unix timestamp *and* support clients preferring `Retry-After` as HTTP-date format.
@@ -209,12 +212,15 @@ curl -s localhost:8000/v1/clean \
 
 ### 8. Audit-log verifier CLI
 
+**Current state.** The audit stream is emitted by `RequestContextMiddleware` — one JSON line per request to the `pii_cleaner.audit` logger (stdout by default). Each line has shape `{"prev_hash", "hash", "event": {...}}`; the chain construction is documented in the `AuditLogger` docstring. To capture a file for verification, redirect the audit logger's stream (or redirect stdout) while running the service. Set `PII_AUDIT_HMAC_KEY_FILE` to a 32-byte key file so the chain is reproducible across restarts — without it, `load_hmac_key` uses an ephemeral key (warn-logged) and the chain cannot be verified after process exit.
+
 **Goal.** A console command `pii-audit-verify <logfile>` that reads the JSON-lines audit stream produced by the service, recomputes the HMAC chain, and exits non-zero with a clear report on the first tampered record. Requires the HMAC key (same file as `PII_AUDIT_HMAC_KEY_FILE`).
 
 **Why this exercise.** Great defensive-side exercise. The skill being drilled is *making the agent produce a tool whose output format must match an existing format exactly, with no drift*. The agent must *read* `observability/audit.py` carefully rather than *invent* a plausible-looking chain format.
 
 **Files to look at.**
-- `src/pii_cleaner/observability/audit.py` — the producer. Verifier must mirror this exactly.
+- `src/pii_cleaner/observability/audit.py` — the producer. Verifier must mirror this exactly (pay attention to `json.dumps(..., sort_keys=True, separators=(",", ":"))` — any formatting drift breaks the chain).
+- `src/pii_cleaner/observability/logging.py` — `_emit_audit_event` shows the concrete event shape emitted per request.
 - `pyproject.toml` — `[project.scripts]` for the console entry point.
 - `tests/unit/test_audit.py` — extend with verifier tests.
 
@@ -238,7 +244,7 @@ curl -s localhost:8000/v1/clean \
 
 **Files to look at.**
 - `src/pii_cleaner/core/recognizers/` — the extension point.
-- `src/pii_cleaner/config/settings.py` — SIGHUP reload pattern is already there for tenants; reuse the pattern.
+- `src/pii_cleaner/config/settings.py` — SIGHUP reload pattern is already there for tenants; reuse the pattern. `TenantRegistry.register_reload_listener` offers a callback hook you can piggyback on, or build a parallel `RecognizerRegistry` with its own handler.
 
 **Acceptance criteria.**
 - At least one documented defense against ReDoS, explained in the PR description.
