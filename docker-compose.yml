@@ -1,0 +1,34 @@
+services:
+  pii-cleaner:
+    build: .
+    image: pii-cleaner:local
+    ports:
+      - "8000:8000"
+    environment:
+      PII_LOG_LEVEL: INFO
+      PII_TENANTS_FILE: /etc/pii-cleaner/tenants.yaml
+      PII_DEFAULT_RPS: "100"
+      PII_DEFAULT_BURST: "200"
+    volumes:
+      - ./config/tenants.example.yaml:/etc/pii-cleaner/tenants.yaml:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 1G

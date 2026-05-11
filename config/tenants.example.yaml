@@ -1,0 +1,30 @@
+# Example tenant registry. Copy to /etc/pii-cleaner/tenants.yaml (or set PII_TENANTS_FILE).
+#
+# Generate a hash:
+#   python -c "from argon2 import PasswordHasher; print(PasswordHasher().hash('YOUR-KEY'))"
+#
+# Each tenant may have up to two active keys to support zero-downtime rotation.
+# Send SIGHUP to the process to reload this file without a restart.
+
+tenants:
+  - id: acme
+    keys:
+      - hash: "$argon2id$v=19$m=65536,t=3,p=4$REPLACE_ME$REPLACE_ME"
+      # Uncomment during a rotation window:
+      # - hash: "$argon2id$v=19$m=65536,t=3,p=4$OLD_KEY_HASH$..."
+    rate_limit_rps: 200
+    rate_limit_burst: 400
+    policy:
+      entities:
+        - EMAIL_ADDRESS
+        - PHONE_NUMBER
+        - CREDIT_CARD
+        - IBAN_CODE
+        - IP_ADDRESS
+        - URL
+        - US_SSN
+        - PERSON
+        - LOCATION
+      thresholds:
+        PERSON: 0.7
+        LOCATION: 0.7
