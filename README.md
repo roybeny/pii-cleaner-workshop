@@ -49,6 +49,26 @@ curl -s localhost:8000/v1/clean \
   -d '{"text":"email john@acme.com"}' | jq
 ```
 
+Structured records with a per-field policy (`clean` = redact PII, `skip` = pass through untouched, `drop` = remove the field entirely):
+
+```bash
+curl -s localhost:8000/v1/clean/records \
+  -H 'Authorization: Bearer my-dev-key' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "records": [
+      {"id": "u_123", "name": "Jane Doe", "email": "jane@acme.com", "notes": "call me at 415-555-0131"},
+      {"id": "u_456", "name": "John Roe", "email": "john@acme.com", "notes": "n/a"}
+    ],
+    "field_policy": {
+      "id":    {"action": "skip"},
+      "name":  {"action": "clean"},
+      "email": {"action": "clean"},
+      "notes": {"action": "clean"}
+    }
+  }' | jq
+```
+
 OpenAPI UI: <http://localhost:8000/docs>.
 
 ## Configuration
