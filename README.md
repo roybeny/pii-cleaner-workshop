@@ -57,7 +57,7 @@ curl -s localhost:8000/v1/clean/records \
   -H 'Content-Type: application/json' \
   -d '{
     "records": [
-      {"id": "u_123", "name": "Jane Doe", "email": "jane@acme.com", "notes": "call me at 415-555-0131"},
+      {"id": "u_123", "name": "Jane Doe", "email": "jane@acme.com", "notes": "mobile 415-962-8731"},
       {"id": "u_456", "name": "John Roe", "email": "john@acme.com", "notes": "n/a"}
     ],
     "field_policy": {
