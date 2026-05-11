@@ -145,3 +145,60 @@ async def test_rate_limit_headers(client: httpx.AsyncClient, api_keys: tuple[str
     assert r.status_code == 200
     assert "x-ratelimit-remaining" in {k.lower() for k in r.headers}
     assert "x-request-id" in {k.lower() for k in r.headers}
+
+
+async def test_unknown_tenant_after_auth_returns_401(
+    client: httpx.AsyncClient, api_keys: tuple[str, str], app: Any
+) -> None:
+    # Auth succeeded (cached verifier) but the tenant was removed from the registry
+    # between auth and route handler — e.g., mid-rotation SIGHUP reload. The route
+    # must refuse rather than crash or serve a ghost tenant.
+    async with client as ac:
+        # Prime the verifier cache so auth will succeed without touching the registry.
+        warm = await ac.post(
+            "/v1/clean",
+            headers={"Authorization": f"Bearer {api_keys[0]}"},
+            json={"text": "hi"},
+        )
+        assert warm.status_code == 200
+
+        # Now remove the tenant. Cached auth still passes; route handler must 401.
+        app.state.tenant_registry._by_id.clear()
+
+        r = await ac.post(
+            "/v1/clean",
+            headers={"Authorization": f"Bearer {api_keys[0]}"},
+            json={"text": "hi"},
+        )
+
+    assert r.status_code == 401
+    assert r.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+async def test_rate_limit_triggers_429_with_retry_after(
+    client: httpx.AsyncClient, api_keys: tuple[str, str], app: Any
+) -> None:
+    # Force tight limits on tenant 'acme' and reset buckets so the next call fills it.
+    tenant = app.state.tenant_registry.get("acme")
+    tenant.rate_limit_rps = 1
+    tenant.rate_limit_burst = 1
+    app.state.rate_limiter._buckets.clear()
+
+    async with client as ac:
+        first = await ac.post(
+            "/v1/clean",
+            headers={"Authorization": f"Bearer {api_keys[0]}"},
+            json={"text": "hi"},
+        )
+        second = await ac.post(
+            "/v1/clean",
+            headers={"Authorization": f"Bearer {api_keys[0]}"},
+            json={"text": "hi"},
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    body = second.json()
+    assert body["error"]["code"] == "RATE_LIMITED"
+    assert "retry-after" in {k.lower() for k in second.headers}
+    assert int(second.headers["retry-after"]) >= 1

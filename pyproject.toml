@@ -89,7 +89,12 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-ra --strict-markers --strict-config"
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # Third-party deprecations we can't fix; ignore rather than let them break the suite.
+    "ignore::DeprecationWarning:jsonschema",
+    "ignore::DeprecationWarning:schemathesis",
+]
 
 [tool.coverage.run]
 branch = true

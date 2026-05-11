@@ -44,3 +44,22 @@ def test_tenant_override_used_when_present(tenants_file: Path) -> None:
     for _ in range(10):
         allowed, _, _ = limiter.try_consume("acme", cost=1.0)
         assert allowed
+
+
+def test_retry_after_shrinks_as_bucket_refills(tenants_file: Path) -> None:
+    # retry_after must reflect actual refill progress so clients retry at the
+    # right time. An off-by-rps or truncation bug would desync clients.
+    limiter = _limiter(tenants_file, rps=10, burst=1)
+
+    allowed, _, _ = limiter.try_consume("anon", cost=1.0)
+    assert allowed
+
+    _, _, retry_first = limiter.try_consume("anon", cost=1.0)
+    assert retry_first > 0
+
+    time.sleep(0.05)  # Bucket refills ~0.5 tokens at 10 rps.
+
+    _, _, retry_second = limiter.try_consume("anon", cost=1.0)
+    assert 0 < retry_second < retry_first
+    # Shrinkage should be close to elapsed time (tolerance for scheduler jitter).
+    assert retry_first - retry_second >= 0.03
